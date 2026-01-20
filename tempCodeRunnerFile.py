@@ -1,1 +1,0 @@
-content.decode('utf-8')

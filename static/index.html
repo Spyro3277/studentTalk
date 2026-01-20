@@ -26,6 +26,7 @@
                 <div class="message bot-message">
                     Hi! I'm your academic assistant. I can help you with course content, assignments, and programming questions. How can I help you today?
                 </div>
+                
             </div>
             
             <div class="input-container">
@@ -36,6 +37,7 @@
             <p><small>🔒 Your conversations are monitored for academic support and wellbeing.</small></p>
         </div>
 
+        
         <div style = "margin-bottom: 20px;">
 
             <h3>Upload Syllabus</h3>
@@ -47,10 +49,19 @@
         <script>
             const studentId = 'student_' + Math.random().toString(36).substr(2, 9);
             const ws = new WebSocket(`ws://localhost:8000/ws/${studentId}`);
+            let thinkingMessage = null;
             
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
-                addMessage(data.message, 'bot');
+
+                if(thinkingMessage){
+                    thinkingMessage.textContent = data.message;
+                    thinkingMessage = null;
+                }else{
+                    addMessage(data.message, 'bot');
+                }
+                
+               
                 
                 if (data.flagged) {
                     console.log('Student flagged for wellbeing check');
@@ -64,18 +75,26 @@
                 messageDiv.textContent = message;
                 chatContainer.appendChild(messageDiv);
                 chatContainer.scrollTop = chatContainer.scrollHeight;
+                return messageDiv;
             }
             
             function sendMessage() {
                 const input = document.getElementById('messageInput');
                 const message = input.value.trim();
                 
+                
                 if (message) {
                     addMessage(message, 'user');
+
+                    thinkingMessage = addMessage('Thinking...', 'bot');
                     ws.send(JSON.stringify({message: message}));
                     input.value = '';
+
+                    
                 }
             }
+
+        
             
             function handleKeyPress(event) {
                 if (event.key === 'Enter') {

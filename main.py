@@ -236,6 +236,7 @@ Response:"""
             }
             student_interactions[student_id].append(bot_interaction)
             chat_history.append(bot_interaction)
+
             
             # Send response back to student
             await websocket.send_text(json.dumps({
