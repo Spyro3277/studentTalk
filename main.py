@@ -142,6 +142,7 @@ knowledge_base = CourseKnowledgeBase()
 
 @app.post("/upload_syllabus")
 async def upload_syllabus(file: UploadFile = File(...)):
+    
     try:
         content = await file.read()
         

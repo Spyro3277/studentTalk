@@ -36,6 +36,14 @@
             <p><small>🔒 Your conversations are monitored for academic support and wellbeing.</small></p>
         </div>
 
+        <div style = "margin-bottom: 20px;">
+
+            <h3>Upload Syllabus</h3>
+            <input type="file" id="syllabusFile">
+            <button onclick="uploadSyllabus()">Upload</button>
+            <p id = "uploadStatus"></p>
+        </div>
+
         <script>
             const studentId = 'student_' + Math.random().toString(36).substr(2, 9);
             const ws = new WebSocket(`ws://localhost:8000/ws/${studentId}`);
@@ -75,5 +83,6 @@
                 }
             }
         </script>
+        <script src="/static/uploadSyllabus.js"></script>
     </body>
     </html>
