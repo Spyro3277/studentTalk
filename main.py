@@ -2,7 +2,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-#from fastapi.responses import HTMLResponse
 import ollama
 import asyncio
 import json
@@ -15,7 +14,13 @@ import datetime
 import os
 from typing import List, Dict, Any
 import faiss
+import docx
 import pickle
+import wellbeingMonitor
+import courseKnowledgeBase
+from io import BytesIO
+
+#http://0.0.0.0:8000/wellbeing_dashboard
 
 app = FastAPI(title="Student Chatbot")
 
@@ -38,107 +43,12 @@ chat_history = []
 student_interactions = {}
 wellbeing_flags = []
 
-class WellbeingMonitor:
-    def __init__(self):
-        self.stress_keywords = [
-            'overwhelmed', 'stressed', 'can\'t handle', 'too much', 'giving up',
-            'impossible', 'hopeless', 'failing', 'behind', 'panic', 'anxiety'
-        ]
-        self.confusion_keywords = [
-            'confused', 'don\'t understand', 'makes no sense', 'stuck',
-            'lost', 'help', 'struggling', 'difficult', 'hard'
-        ]
-    
-    def analyze_message(self, message: str, student_id: str) -> Dict[str, Any]:
-        # Sentiment analysis
-        blob = TextBlob(message)
-        vader_scores = sentiment_analyzer.polarity_scores(message)
-        
-        # Keyword detection
-        message_lower = message.lower()
-        stress_count = sum(1 for keyword in self.stress_keywords if keyword in message_lower)
-        confusion_count = sum(1 for keyword in self.confusion_keywords if keyword in message_lower)
-        
-        # Calculate wellbeing score (0-10, lower is concerning)
-        base_score = 5
-        sentiment_adjustment = (vader_scores['compound'] + 1) * 2.5  # Scale to 0-5
-        stress_penalty = stress_count * 1.5
-        confusion_penalty = confusion_count * 0.5
-        
-        wellbeing_score = max(0, base_score + sentiment_adjustment - stress_penalty - confusion_penalty)
-        
-        analysis = {
-            'timestamp': datetime.datetime.now().isoformat(),
-            'student_id': student_id,
-            'message': message,
-            'sentiment': {
-                'polarity': blob.sentiment.polarity,
-                'subjectivity': blob.sentiment.subjectivity,
-                'vader': vader_scores
-            },
-            'wellbeing_score': wellbeing_score,
-            'stress_indicators': stress_count,
-            'confusion_indicators': confusion_count,
-            'flag_for_review': wellbeing_score < 3.0 or stress_count > 2
-        }
-        
-        if analysis['flag_for_review']:
-            wellbeing_flags.append(analysis)
-            print(f"⚠️  WELLBEING FLAG: Student {student_id} scored {wellbeing_score:.1f}")
-        
-        return analysis
 
-wellbeing_monitor = WellbeingMonitor()
+#Initialize wellbeing monitor and knowledgebase
+wellbeing_monitor = wellbeingMonitor.WellbeingMonitor()
 
-class CourseKnowledgeBase:
-    def __init__(self):
-        self.documents = []
-        self.embeddings = []
-        self.index = None
-    
-    def add_document(self, content: str, source: str):
-        # Split into chunks for better retrieval
-        chunks = self.chunk_text(content, 500)
-        for i, chunk in enumerate(chunks):
-            self.documents.append({
-                'content': chunk,
-                'source': source,
-                'chunk_id': i
-            })
-            embedding = sentence_model.encode([chunk])[0]
-            self.embeddings.append(embedding)
-        
-        # Build FAISS index
-        if self.embeddings:
-            embeddings_array = np.array(self.embeddings)
-            self.index = faiss.IndexFlatIP(embeddings_array.shape[1])
-            self.index.add(embeddings_array)
-    
-    def chunk_text(self, text: str, chunk_size: int) -> List[str]:
-        words = text.split()
-        chunks = []
-        for i in range(0, len(words), chunk_size):
-            chunk = ' '.join(words[i:i + chunk_size])
-            chunks.append(chunk)
-        return chunks
-    
-    def search_similar(self, query: str, top_k: int = 3) -> List[Dict]:
-        if not self.index:
-            return []
-        
-        query_embedding = sentence_model.encode([query])
-        scores, indices = self.index.search(query_embedding, top_k)
-        
-        results = []
-        for score, idx in zip(scores[0], indices[0]):
-            if idx < len(self.documents):
-                doc = self.documents[idx].copy()
-                doc['similarity_score'] = float(score)
-                results.append(doc)
-        
-        return results
+knowledge_base = courseKnowledgeBase.CourseKnowledgeBase()
 
-knowledge_base = CourseKnowledgeBase()
 
 @app.post("/upload_syllabus")
 async def upload_syllabus(file: UploadFile = File(...)):
@@ -148,11 +58,17 @@ async def upload_syllabus(file: UploadFile = File(...)):
         
         if file.filename.endswith('.pdf'):
             # Extract text from PDF
-            from io import BytesIO
             pdf_reader = PyPDF2.PdfReader(BytesIO(content))
             text = ""
             for page in pdf_reader.pages:
                 text += page.extract_text()
+        elif file.filename.endswith('.docx'):
+            #Extract text from .docx files
+            document = docx.Document(BytesIO(content))
+            text = ""
+
+            for paragraph in document.paragraphs:
+                text += paragraph.text 
         else:
             text = content.decode('utf-8')
         
@@ -161,6 +77,35 @@ async def upload_syllabus(file: UploadFile = File(...)):
     
     except Exception as e:
         return {"error": str(e)}
+    
+
+@app.post("/uploadAssignment")
+async def uploadAssignment(file: UploadFile = File(...)):
+    try:
+        content = await file.read()
+        
+        if file.filename.endswith('.pdf'):
+            # Extract text from PDF
+            pdf_reader = PyPDF2.PdfReader(BytesIO(content))
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+        elif file.filename.endswith('.docx'):
+            #Extract text from .docx files
+            document = docx.Document(BytesIO(content))
+            text = ""
+
+            for paragraph in document.paragraphs:
+                text += paragraph.text 
+        else:
+            text = content.decode('utf-8')
+        
+        knowledge_base.add_document(text, file.filename)
+        return {"message": f"Successfully uploaded {file.filename}"}
+    
+    except Exception as e:
+        return {"error": str(e)}
+    
 
 @app.get("/wellbeing_dashboard")
 async def get_wellbeing_dashboard():
