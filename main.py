@@ -17,7 +17,7 @@ import faiss
 import docx
 import pickle
 import wellbeingMonitor
-import courseKnowledgeBase
+from courseKnowledgeBase import CourseKnowledgeBase
 from io import BytesIO
 
 #http://0.0.0.0:8000/wellbeing_dashboard
@@ -47,65 +47,117 @@ wellbeing_flags = []
 #Initialize wellbeing monitor and knowledgebase
 wellbeing_monitor = wellbeingMonitor.WellbeingMonitor()
 
-knowledge_base = courseKnowledgeBase.CourseKnowledgeBase()
+#knowledge_base = courseKnowledgeBase.CourseKnowledgeBase()
 
+#Dictionary of different knowledgebases for courses, allowing each course to have seperate content
+courseKnowledgebases: dict[str, CourseKnowledgeBase] = {}
 
-@app.post("/upload_syllabus")
-async def upload_syllabus(file: UploadFile = File(...)):
+def getKnowledgeBase(courseName: str) -> CourseKnowledgeBase:
+    if courseName not in courseKnowledgebases:
+        courseKnowledgebases[courseName] = CourseKnowledgeBase()
+    return courseKnowledgebases[courseName]
+
     
+#Global variables for course content folders
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+COURSE_CONTENTS_DIR = os.path.join(BASE_DIR, "courseContents")
+
+
+@app.get("/showAllFolders")
+async def showAllFolders():
     try:
-        content = await file.read()
-        
-        if file.filename.endswith('.pdf'):
-            # Extract text from PDF
-            pdf_reader = PyPDF2.PdfReader(BytesIO(content))
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-        elif file.filename.endswith('.docx'):
-            #Extract text from .docx files
-            document = docx.Document(BytesIO(content))
-            text = ""
-
-            for paragraph in document.paragraphs:
-                text += paragraph.text 
-        else:
-            text = content.decode('utf-8')
-        
-        knowledge_base.add_document(text, file.filename)
-        return {"message": f"Successfully uploaded {file.filename}"}
-    
+        folders = [
+            name for name in os.listdir(COURSE_CONTENTS_DIR)
+            if os.path.isdir(os.path.join(COURSE_CONTENTS_DIR, name))
+        ]
+        return folders
     except Exception as e:
         return {"error": str(e)}
     
 
-@app.post("/uploadAssignment")
-async def uploadAssignment(file: UploadFile = File(...)):
-    try:
-        content = await file.read()
-        
-        if file.filename.endswith('.pdf'):
-            # Extract text from PDF
-            pdf_reader = PyPDF2.PdfReader(BytesIO(content))
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text()
-        elif file.filename.endswith('.docx'):
-            #Extract text from .docx files
-            document = docx.Document(BytesIO(content))
-            text = ""
-
-            for paragraph in document.paragraphs:
-                text += paragraph.text 
-        else:
-            text = content.decode('utf-8')
-        
-        knowledge_base.add_document(text, file.filename)
-        return {"message": f"Successfully uploaded {file.filename}"}
+@app.post("/addToClassFolder/{courseName}")
+async def addToClassFolder(courseName: str, file: UploadFile = File(...)):
     
+    try:
+        coursePath = os.path.abspath(os.path.join(COURSE_CONTENTS_DIR, courseName))
+
+        filePath = os.path.join(coursePath, file.filename)
+
+        content = await file.read()
+
+        with open(filePath, "wb") as f:
+            f.write(content)
+
+        return{"message": f"{file.filename} uploaded successfully"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/loadClassContent/{courseName}")
+async def loadClassContent(courseName: str):
+    
+
+    knowledge_base = getKnowledgeBase(courseName)
+
+    coursePath = os.path.abspath(os.path.join(COURSE_CONTENTS_DIR, courseName))
+
+    files = [
+        f for f in os.listdir(coursePath)
+        if os.path.isfile(os.path.join(coursePath, f))
+    ]
+
+    for filename in files:
+        filePath = os.path.join(coursePath, filename)
+        print(filePath)
+    
+        try:
+            with open(filePath, "rb") as f:
+                content =  f.read()
+
+            if filename.endswith('.pdf'):
+                # Extract text from PDF
+                pdf_reader = PyPDF2.PdfReader(BytesIO(content))
+                text = ""
+                for page in pdf_reader.pages:
+                    text += page.extract_text()
+            elif filename.endswith('.docx'):
+                #Extract text from .docx files
+                document = docx.Document(BytesIO(content))
+                text = ""
+
+                for paragraph in document.paragraphs:
+                    text += paragraph.text 
+            else:
+                text = content.decode('utf-8')
+            
+            
+            knowledge_base.add_document(text, filename)
+            print(f":Loaded {f.filename}")
+        
+        
+        except Exception as e:
+            return {"error": str(e)}
+    return {"message": f"Successfully uploaded {len(files)} files"}
+    
+
+@app.post("/addNewClass/{courseName}")
+async def addNewClass(courseName: str):
+    
+    try:
+        newClassPath = os.join(COURSE_CONTENTS_DIR, courseName)
+    
+        if not os.path.exists(newClassPath):
+            #Creates a new class folder and make a knowledgebase for it
+            newClassPath.mkdir(newClassPath)
+            courseKnowledgebases[courseName] = CourseKnowledgeBase()
+        else:
+            return {"message": f"This course already exists: {courseName}"}
+
+
     except Exception as e:
         return {"error": str(e)}
     
+    return {"message": f"Successfully added new class: {courseName}"}
 
 @app.get("/wellbeing_dashboard")
 async def get_wellbeing_dashboard():
@@ -117,8 +169,8 @@ async def get_wellbeing_dashboard():
         "student_summary": {}
     }
 
-@app.websocket("/ws/{student_id}")
-async def websocket_endpoint(websocket: WebSocket, student_id: str):
+@app.websocket("/ws/{courseName}/{student_id}")
+async def websocket_endpoint(websocket: WebSocket, courseName: str, student_id: str):
     await websocket.accept()
     
     if student_id not in student_interactions:
@@ -145,20 +197,20 @@ async def websocket_endpoint(websocket: WebSocket, student_id: str):
             wellbeing_analysis = wellbeing_monitor.analyze_message(user_message, student_id)
             
             # Search knowledge base for relevant content
-            relevant_docs = knowledge_base.search_similar(user_message)
+            relevant_docs = getKnowledgeBase(courseName).search_similar(user_message)
             context = "\n".join([doc['content'] for doc in relevant_docs[:2]])
             
             # Generate response using Ollama
             prompt = f"""You are a helpful academic assistant for undergraduate students in C++ programming and algorithms courses.
 
-Context from course materials:
-{context}
+                            Context from course materials:
+                            {context}
 
-Student question: {user_message}
+                            Student question: {user_message}
 
-Please provide a helpful, encouraging response. If the question is about course content, use the context provided. If it's about programming, provide clear explanations and examples. Always be supportive and understanding of student stress.
+                            Please provide a helpful, encouraging response. If the question is about course content, use the context provided. If it's about programming, provide clear explanations and examples. Always be supportive and understanding of student stress.
 
-Response:"""
+                            Response:"""
 
             try:
                 response = ollama.generate(
